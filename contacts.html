@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Management</title>
+  <link rel="stylesheet" href="CSS/chats.css">
+  <link rel="stylesheet" href="CSS/contacts.css">
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css" rel="stylesheet"/>
+  <style>
+    /* Modal and popup styles - handled by contacts.css */
+  </style>
+</head>
+<body>
+  <header>
+    <div class="chat-container">
+      <div class="chats-nav">
+          <div>
+              <h2>Contacts</h2>
+          </div>
+          <div class="nav-links-1">
+              <div>
+                  <button><i class="ri-lock-line"></i></button>
+              </div>
+              <div>
+                  <button><i class="ri-search-line"></i></button>
+              </div>
+              <div>
+                  <button><i class="ri-more-2-fill"></i></button>
+              </div>
+          </div>
+      </div>
+   </div>
+   <div class="search-container">
+     <input type="text" id="search-input" class="search-input" placeholder="Search contacts...">
+   </div>
+   <div class="nav-links-2">
+        <div>
+            <a href="chats.html"><button><i class="ri-chat-3-fill "></i></button></a>
+        </div>
+        <div>
+            <a href="calls.html"><button><i class="ri-phone-fill"></i></button></a>
+        </div>
+        <div>
+            <a href="contacts.html"><button style="color:  rgb(38, 109, 203);"><i class="ri-group-fill"></i></button></a>
+        </div>
+        <div>
+            <a href="settings.html"><button><i class="ri-settings-5-line"></i></button></a>
+        </div>
+   </div>
+   
+   <div style="text-align: center;">
+    <button id="add-contact-btn"><i class="ri-add-large-fill"></i></button>
+   </div>
+  
+  <div id="contacts-list"></div>
+
+  <!-- Add Contact Modal -->
+  <div id="modal-overlay" class="modal-overlay"></div>
+  <div id="add-contact-modal" class="modal">
+    <div class="modal-header">
+      ok
+    </div>
+    <div style="text-align: center;">
+      <h2>Add New Contact</h2>
+    </div>
+    <form id="add-contact-form">
+      <input type="text" id="contact-mobile-number" placeholder="123-456" required maxlength="7">
+      <small id="error" style="color: rgb(162, 11, 11);"></small>
+      <div class="modal-footer">
+        <button type="submit"><i class="ri-arrow-right-line" style="background: none;"></i></button>
+      </div>
+      <button id="close-modal">Cancel</button>
+    </form>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+    import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+    import { getFirestore, doc, getDoc, updateDoc, arrayUnion, collection, query, where, getDocs, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBX74wlrm96EE9zO7QQYSI21xGp_eO40IE",
+      authDomain: "posts-c532d.firebaseapp.com",
+      projectId: "posts-c532d",
+      storageBucket: "posts-c532d.appspot.com",
+      messagingSenderId: "742123859279",
+      appId: "1:742123859279:web:13ba1af7ac53774a1e693a"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const addContactBtn = document.getElementById("add-contact-btn");
+    const addContactModal = document.getElementById("add-contact-modal");
+    const closeModal = document.getElementById("close-modal");
+    const addContactForm = document.getElementById("add-contact-form");
+    const contactMobileNumber = document.getElementById("contact-mobile-number");
+    const contactsList = document.getElementById("contacts-list");
+    const searchInput = document.getElementById("search-input");
+
+    let currentUser = null;
+    let allContacts = []; // Store all contacts for filtering
+
+    // Search functionality
+    searchInput.addEventListener("input", function(e) {
+      const searchTerm = e.target.value.toLowerCase().trim();
+      filterContacts(searchTerm);
+    });
+
+    function filterContacts(searchTerm) {
+      if (!searchTerm) {
+        renderContacts(allContacts);
+        return;
+      }
+      
+      const filteredContacts = allContacts.filter(function(contact) {
+        const name = (contact.name || "").toLowerCase();
+        const mobile = (contact.mobile || "").toLowerCase();
+        return name.includes(searchTerm) || mobile.includes(searchTerm);
+      });
+      
+      renderContacts(filteredContacts);
+    }
+
+    function renderContacts(contacts) {
+      contactsList.innerHTML = "";
+      
+      if (contacts.length === 0) {
+        contactsList.innerHTML = "<div class='no-contacts'>" + (searchInput.value ? "No contacts found" : "No contacts yet") + "</div>";
+        return;
+      }
+
+      for (const contact of contacts) {
+        const contactDiv = document.createElement("div");
+        contactDiv.classList.add("contact");
+        contactDiv.innerHTML = 
+          "<div class='call'>" +
+            "<div class='call_header'>" +
+                "<div>" +
+                    "<img src='" + (contact.image || "images/default-profile.png") + "' alt='Profile Image' width='60px' height='60px' style='border-radius: 50px;'>" +
+                "</div>" +
+                "<div class='call-name'>" +
+                    "<div>" +
+                        "<h2>" + contact.mobile + "</h2>" +
+                    "</div>" +
+                    "<div class='call-missed'>" +
+                        "<p style='color:rgb(50, 47, 47)'>" + contact.name + "</p>" +
+                    "</div>" +
+                "</div>" +
+            "</div>" +
+            "<div class='call-time'>" +
+              "<button class='call-btn' data-id='" + contact.id + "'>Call</button>" +
+                "<button class='send-message-btn' data-id='" + contact.id + "'>Chat <i class='ri-arrow-right-up-line'></i></button>" +
+                "<button class='delete-contact-btn' data-id='" + contact.id + "'><i class='ri-close-large-line'></i></button>" +
+            "</div>" +
+        "</div>";
+
+        const callButton = contactDiv.querySelector(".call-btn");
+        callButton.addEventListener("click", function() { initiateCall(contact.id, contact); });
+
+        const sendMessageBtn = contactDiv.querySelector(".send-message-btn");
+        sendMessageBtn.addEventListener("click", function() { startChat(contact.id, contact); window.location.href = "chats.html"; });
+
+        const deleteContactBtn = contactDiv.querySelector(".delete-contact-btn");
+        deleteContactBtn.addEventListener("click", function() { deleteContact(contact.id, contact.name); });
+
+        contactsList.appendChild(contactDiv);
+      }
+    }
+
+    async function loadContacts() {
+      try {
+        const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          const contacts = userData.contacts || [];
+          
+          allContacts = [];
+          
+          for (const contactId of contacts) {
+            const contactDoc = await getDoc(doc(db, "users", contactId));
+            if (contactDoc.exists()) {
+              const contactData = contactDoc.data();
+              allContacts.push({
+                id: contactId,
+                name: contactData.firstName + " " + contactData.lastName,
+                mobile: contactData.mobileNumber || "",
+                image: contactData.profileImageUrl
+              });
+            }
+          }
+          
+          renderContacts(allContacts);
+        }
+      } catch (error) {
+        console.error("Error loading contacts:", error);
+        contactsList.innerHTML = "<div class='no-contacts'>Error loading contacts</div>";
+      }
+    }
+
+    addContactBtn.addEventListener("click", function() {
+      addContactModal.style.display = "block";
+    });
+
+    closeModal.addEventListener("click", function() {
+      addContactModal.style.display = "none";
+    });
+
+    contactMobileNumber.addEventListener("input", function(e) {
+      let value = e.target.value.replace(/-/g, "");
+      if (value.length > 3) {
+        value = value.slice(0, 3) + "-" + value.slice(3);
+      }
+      e.target.value = value;
+    });
+
+    async function deleteContact(contactId, contactName) {
+      const confirmation = confirm("Are you sure you want to delete " + contactName + " from your contacts?");
+      if (confirmation) {
+        const userRef = doc(db, "users", currentUser.uid);
+        const userDoc = await getDoc(userRef);
+
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          const updatedContacts = userData.contacts ? userData.contacts.filter(function(id) { return id !== contactId; }) : [];
+          const updatedChats = userData.chats ? userData.chats.filter(function(chat) { return chat.contactId !== contactId; }) : [];
+
+          await updateDoc(userRef, {
+            contacts: updatedContacts,
+            chats: updatedChats
+          });
+
+          alert("Contact and associated chat removed successfully.");
+          loadContacts();
+        }
+      }
+    }
+
+    async function startChat(contactId, contactData) {
+      const userDoc = await getDoc(doc(db, "users", currentUser.uid));
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        const chatId = currentUser.uid < contactId ? "chat_" + currentUser.uid + "_" + contactId : "chat_" + contactId + "_" + currentUser.uid;
+        
+        if (!userData.chats || !userData.chats.find(function(chat) { return chat.chatId === chatId; })) {
+          const userRef = doc(db, "users", currentUser.uid);
+          const contactRef = doc(db, "users", contactId);
+          await updateDoc(userRef, { chats: arrayUnion({ chatId: chatId, contactId: contactId }) });
+          await updateDoc(contactRef, { chats: arrayUnion({ chatId: chatId, contactId: currentUser.uid }) });
+          await setDoc(doc(db, "chats", chatId), { messages: [] });
+        }
+      }
+    }
+
+    addContactForm.addEventListener("submit", async function(e) {
+      e.preventDefault();
+      const mobileNumber = contactMobileNumber.value;
+      const mobileNumberRegex = /^\d{3}-\d{3}$/;
+      
+      if (!mobileNumberRegex.test(mobileNumber)) {
+        alert("Please enter a valid mobile number (e.g., 123-456).");
+        return;
+      }
+
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("mobileNumber", "==", mobileNumber));
+      const querySnapshot = await getDocs(q);
+
+      if (!querySnapshot.empty) {
+        const contactDoc = querySnapshot.docs[0];
+        const contactData = contactDoc.data();
+        const userRef = doc(db, "users", currentUser.uid);
+        
+        const userDoc = await getDoc(userRef);
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          const contacts = userData.contacts || [];
+          if (!contacts.includes(contactDoc.id)) {
+            await updateDoc(userRef, { contacts: arrayUnion(contactDoc.id) });
+            alert("Contact added successfully: " + contactData.firstName + " " + contactData.lastName);
+            addContactModal.style.display = "none";
+            loadContacts();
+          } else {
+            alert("Contact already exists!");
+          }
+        }
+      } else {
+        document.getElementById("error").textContent = "Mobile number not found!";
+      }
+    });
+
+    async function initiateCall(contactId, contactData) {
+      const chatId = currentUser.uid < contactId ? "chat_" + currentUser.uid + "_" + contactId : "chat_" + contactId + "_" + currentUser.uid;
+      
+      await updateDoc(doc(db, "users", contactId), {
+        incomingCall: {
+          from: currentUser.uid,
+          callerName: currentUser.firstName + " " + currentUser.lastName,
+          callerImage: currentUser.profileImageUrl || "images/default-profile.png",
+          chatId: chatId
+        }
+      });
+
+      window.location.href = "calling.html?contactId=" + contactId + "&chatId=" + chatId;
+    }
+
+    // Listen for incoming calls
+    function listenForIncomingCalls() {
+      if (!currentUser) return;
+      
+      const userRef = doc(db, "users", currentUser.uid);
+      onSnapshot(userRef, function(snapshot) {
+        const userData = snapshot.data();
+        if (userData && userData.incomingCall) {
+          const callData = userData.incomingCall;
+          showIncomingCallPopup(callData);
+        }
+      });
+    }
+
+    function showIncomingCallPopup(callData) {
+      const ringingPopup = document.createElement("div");
+      ringingPopup.classList.add("ringing-popup");
+      ringingPopup.innerHTML = 
+        "<div class='call-container'>" +
+          "<img src='" + (callData.callerImage || "images/default-profile.png") + "' alt='Caller Image' style='width: 80px; height: 80px; border-radius: 50%;'>" +
+          "<h3>" + callData.callerName + " is calling...</h3>" +
+          "<button class='accept-call'>Accept</button>" +
+          "<button class='refuse-call'>Refuse</button>" +
+        "</div>";
+
+      document.body.appendChild(ringingPopup);
+
+      const acceptCallBtn = ringingPopup.querySelector(".accept-call");
+      acceptCallBtn.addEventListener("click", function() {
+        window.location.href = "receiving-call.html?chatId=" + callData.chatId + "&callerId=" + callData.from;
+        ringingPopup.remove();
+      });
+
+      const refuseCallBtn = ringingPopup.querySelector(".refuse-call");
+      refuseCallBtn.addEventListener("click", async function() {
+        await updateDoc(doc(db, "users", currentUser.uid), { incomingCall: null });
+        ringingPopup.remove();
+      });
+    }
+
+    onAuthStateChanged(auth, async function(user) {
+      if (user) {
+        currentUser = user;
+        await loadContacts();
+        listenForIncomingCalls();
+      } else {
+        window.location.href = "auth.html";
+      }
+    });
+  </script>
+</body>
+</html>

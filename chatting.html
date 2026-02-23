@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chatting</title>
+  <link rel="stylesheet" href="CSS/chatting.css">
+  <link href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css" rel="stylesheet"/>
+  <style>
+    /* Core message styles - handled by chatting.css */
+    .recording { animation: pulse 1s infinite; color: red !important; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    #chat-messages { min-height: 100%; padding: 10px; }
+  </style>
+</head>
+<body>
+<div id="selection-toolbar">
+  <div style="display: flex; align-items: center; gap: 15px;">
+    <button id="close-selection" title="Cancel"><i class="ri-arrow-left-s-line"></i></button>
+    <span class="count"><span id="selected-count">0</span> selected</span>
+  </div>
+  <div class="actions">
+    <button id="delete-selected" title="Delete"><i class="ri-delete-bin-line"></i></button>
+  </div>
+</div>
+
+<section>
+  <div class="chatting" id="chat-header">
+    <div class="chatting-ctn">
+        <div class="chatting-bd">
+            <div class="chatting-user-profile">
+                <div onclick="window.location='chats.html'">
+                    <div><i class="ri-arrow-left-s-line"></i></div>
+                </div>
+                <div><img id="contact-image" src="" alt="Contact" style="border-radius: 50%;width: 50px;height: 50px;"></div>
+            </div>
+            <div class="chatting-user">
+                <h2 id="contact-name">Loading...</h2>
+            </div>
+        </div>
+        <div class="chatting-actions-1">
+            <div id="call-btn" style="cursor: pointer;"><i class="ri-phone-fill"></i></div>
+            <div><i class="ri-video-on-line"></i></div>
+            <div id="contact-info-btn" style="cursor: pointer;"><i class="ri-information-line"></i></div>
+        </div>
+    </div>
+</div>
+<div class="chatting-body">
+  <div id="chat-messages">
+    <div class="no-messages">Loading messages...</div>
+  </div>
+</div>
+<div id="attach-menu" class="attach-menu">
+  <div class="attach-option" id="photo-option">
+    <i class="ri-image-line"></i>
+    <span>Photo</span>
+  </div>
+  <div class="attach-option" id="voice-option">
+    <i class="ri-mic-line"></i>
+    <span>Voice</span>
+  </div>
+</div>
+<input type="file" id="image-input" accept="image/*" style="display: none;">
+<div class="chatting-actions">
+  <div id="chat-input" style="display: flex; flex: 1; align-items: center; gap: 10px;">
+    <button id="attach-btn" style="background: none; border: none; font-size: 1.5rem; color: #007bff; cursor: pointer;"><i class="ri-add-circle-line"></i></button>
+    <button id="voice-record-btn" title="Hold to record"><i class="ri-mic-fill"></i></button>
+    <input type="text" id="message-input" placeholder="Type your message..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 20px; font-size: 1rem;" />
+    <button id="send-button" style="background: none; border: none; font-size: 1.5rem; color: #007bff; cursor: pointer;"><i class="ri-send-plane-2-line"></i></button>
+  </div>
+</div>
+</section>  
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+import { getFirestore, doc, getDoc, collection, addDoc, onSnapshot, updateDoc, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-storage.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyBX74wlrm96EE9zO7QQYSI21xGp_eO40IE",
+  authDomain: "posts-c532d.firebaseapp.com",
+  projectId: "posts-c532d",
+  storageBucket: "posts-c532d.appspot.com",
+  messagingSenderId: "742123859279",
+  appId: "1:742123859279:web:13ba1af7ac53774a1e693a"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+let currentUser = null;
+let contactId = null;
+let selectionMode = false;
+let selectedMessages = new Set();
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+let recordingTimeout = null;
+
+const chatMessages = document.getElementById("chat-messages");
+const messageInput = document.getElementById("message-input");
+const sendButton = document.getElementById("send-button");
+const attachBtn = document.getElementById("attach-btn");
+const attachMenu = document.getElementById("attach-menu");
+const imageInput = document.getElementById("image-input");
+const photoOption = document.getElementById("photo-option");
+const voiceRecordBtn = document.getElementById("voice-record-btn");
+const selectionToolbar = document.getElementById("selection-toolbar");
+const chatHeader = document.getElementById("chat-header");
+
+const urlParams = new URLSearchParams(window.location.search);
+contactId = urlParams.get("contactId");
+
+console.log("contactId:", contactId);
+
+if (!contactId) {
+  alert("Invalid chat link");
+  window.location.href = "chats.html";
+}
+
+// =====================
+// MARK MESSAGES AS READ
+// =====================
+
+async function markMessagesAsRead() {
+  if (!currentUser || !contactId) return;
+  
+  try {
+    const snapshot = await getDocs(collection(db, "messages"));
+    const unreadMessages = [];
+    
+    snapshot.forEach((doc) => {
+      const msg = doc.data();
+      // Find messages from contact to current user that are unread
+      if (msg.senderId === contactId && msg.receiverId === currentUser.uid && !msg.read) {
+        unreadMessages.push(doc.id);
+      }
+    });
+    
+    // Mark all unread messages as read
+    for (const msgId of unreadMessages) {
+      await updateDoc(doc(db, "messages", msgId), {
+        read: true,
+        readAt: serverTimestamp()
+      });
+    }
+    
+    console.log("Marked " + unreadMessages.length + " messages as read");
+  } catch (error) {
+    console.error("Error marking messages as read:", error);
+  }
+}
+
+// =====================
+// LOAD MESSAGES
+// =====================
+
+async function loadMessages() {
+  console.log("Loading messages for contact:", contactId);
+  
+  chatMessages.innerHTML = '<div class="no-messages">Loading messages...</div>';
+  
+  try {
+    const snapshot = await getDocs(collection(db, "messages"));
+    console.log("Total messages in DB:", snapshot.size);
+    
+    let messages = [];
+    
+    snapshot.forEach((doc) => {
+      const msg = doc.data();
+      msg.id = doc.id;
+      messages.push(msg);
+    });
+    
+    // Filter messages between current user and contact
+    messages = messages.filter(msg => {
+      const isFromContact = msg.senderId === contactId;
+      const isToContact = msg.receiverId === contactId;
+      const isFromUser = msg.senderId === currentUser?.uid;
+      const isToUser = msg.receiverId === currentUser?.uid;
+      
+      return (isFromContact && isToUser) || (isFromUser && isToContact);
+    });
+    
+    // Sort by timestamp
+    messages.sort((a, b) => {
+      const timeA = a.timestamp ? (a.timestamp.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp).getTime()) : 0;
+      const timeB = b.timestamp ? (b.timestamp.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp).getTime()) : 0;
+      return timeA - timeB;
+    });
+    
+    chatMessages.innerHTML = "";
+    
+    if (messages.length === 0) {
+      chatMessages.innerHTML = '<div class="no-messages">No messages yet. Say hi!</div>';
+    } else {
+      messages.forEach(msg => displayMessage(msg));
+    }
+    
+    // Mark messages as read after loading
+    await markMessagesAsRead();
+    
+  } catch (error) {
+    console.error("Error loading:", error);
+    chatMessages.innerHTML = '<div class="no-messages">Error: ' + error.message + '</div>';
+  }
+}
+
+// =====================
+// REAL-TIME LISTENER
+// =====================
+
+function setupRealtime() {
+  console.log("Setting up real-time...");
+  
+  onSnapshot(collection(db, "messages"), (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === "added") {
+        const msg = change.doc.data();
+        msg.id = change.doc.id;
+        
+        const isFromContact = msg.senderId === contactId;
+        const isToContact = msg.receiverId === contactId;
+        const isFromUser = msg.senderId === currentUser?.uid;
+        const isToUser = msg.receiverId === currentUser?.uid;
+        
+        if ((isFromContact && isToUser) || (isFromUser && isToContact)) {
+          console.log("New message:", msg.text);
+          displayMessage(msg);
+          
+          const noMsg = chatMessages.querySelector('.no-messages');
+          if (noMsg) noMsg.remove();
+          
+          // Mark new incoming messages as read
+          if (isFromContact) {
+            updateDoc(doc(db, "messages", msg.id), {
+              read: true,
+              readAt: serverTimestamp()
+            });
+          }
+        }
+      }
+    });
+  });
+}
+
+// =====================
+// DISPLAY MESSAGE
+// =====================
+
+function formatTime(timestamp) {
+  if (!timestamp) return "";
+  try {
+    let date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } catch(e) { return ""; }
+}
+
+function displayMessage(msg) {
+  if (document.querySelector(`[data-id="${msg.id}"]`)) return;
+  
+  const isSent = msg.senderId === currentUser?.uid;
+  const div = document.createElement("div");
+  div.className = isSent ? "sent" : "received";
+  div.dataset.id = msg.id;
+  div.dataset.senderId = msg.senderId;
+  
+  // Click for selection mode
+  div.addEventListener("click", function() {
+    if (selectionMode) toggleSelection(msg.id);
+  });
+  
+  // Long press for delete
+  let longPressTimer;
+  div.addEventListener("mousedown", function() {
+    longPressTimer = setTimeout(() => {
+      if (msg.senderId === currentUser?.uid) enterSelectionMode(msg.id);
+    }, 500);
+  });
+  div.addEventListener("mouseup", function() { clearTimeout(longPressTimer); });
+  div.addEventListener("mouseleave", function() { clearTimeout(longPressTimer); });
+  
+  if (msg.deleted) {
+    div.innerHTML = '<span style="color: #999; font-style: italic;">This message was deleted</span>';
+  } else {
+    let content = "";
+    if (msg.type === "text") content = msg.text || "";
+    else if (msg.type === "image") content = '<img src="' + (msg.imageUrl || "") + '" class="message-img" onclick="window.open(this.src)">';
+    else if (msg.type === "audio") content = '<audio src="' + (msg.audioUrl || "") + '" controls></audio>';
+    else content = "[" + (msg.type || "message") + "]";
+    
+    div.innerHTML = content + '<span class="timestamp">' + formatTime(msg.timestamp) + '</span>';
+  }
+  
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// =====================
+// SELECTION MODE (for delete)
+// =====================
+
+function enterSelectionMode(messageId) {
+  selectionMode = true;
+  selectedMessages.add(messageId);
+  selectionToolbar.classList.add("show");
+  chatHeader.classList.add("hidden");
+  updateSelectionCount();
+  toggleSelection(messageId);
+}
+
+function exitSelectionMode() {
+  selectionMode = false;
+  selectedMessages.clear();
+  selectionToolbar.classList.remove("show");
+  chatHeader.classList.remove("hidden");
+  document.querySelectorAll(".selected").forEach(el => el.classList.remove("selected"));
+}
+
+function toggleSelection(messageId) {
+  const msgDiv = document.querySelector(`[data-id="${messageId}"]`);
+  if (!msgDiv) return;
+  
+  if (selectedMessages.has(messageId)) {
+    selectedMessages.delete(messageId);
+    msgDiv.classList.remove("selected");
+  } else {
+    selectedMessages.add(messageId);
+    msgDiv.classList.add("selected");
+  }
+  
+  updateSelectionCount();
+  if (selectedMessages.size === 0) exitSelectionMode();
+}
+
+function updateSelectionCount() {
+  document.getElementById("selected-count").textContent = selectedMessages.size;
+}
+
+document.getElementById("close-selection").addEventListener("click", exitSelectionMode);
+
+document.getElementById("delete-selected").addEventListener("click", async function() {
+  if (selectedMessages.size === 0) return;
+  
+  const confirmDelete = confirm(`Delete ${selectedMessages.size} message(s)?`);
+  if (!confirmDelete) return;
+  
+  try {
+    for (const msgId of selectedMessages) {
+      await updateDoc(doc(db, "messages", msgId), {
+        deleted: true,
+        text: "This message was deleted"
+      });
+    }
+    console.log("Messages deleted");
+    exitSelectionMode();
+    await loadMessages(); // Reload to show deleted state
+  } catch (error) {
+    console.error("Error deleting:", error);
+    alert("Error deleting messages");
+  }
+});
+
+// =====================
+// SEND MESSAGE
+// =====================
+
+async function sendMessage() {
+  const text = messageInput.value.trim();
+  if (!text || !currentUser || !contactId) return;
+  
+  try {
+    await addDoc(collection(db, "messages"), {
+      type: "text",
+      text: text,
+      senderId: currentUser.uid,
+      receiverId: contactId,
+      timestamp: serverTimestamp(),
+      read: false
+    });
+    
+    console.log("Sent:", text);
+    messageInput.value = "";
+    
+  } catch (error) {
+    console.error("Error:", error);
+    alert("Error: " + error.message);
+  }
+}
+
+sendButton.addEventListener("click", sendMessage);
+messageInput.addEventListener("keypress", (e) => { if (e.key === "Enter") sendMessage(); });
+
+// =====================
+// VOICE RECORDING
+// =====================
+
+voiceRecordBtn.addEventListener("mousedown", startRecording);
+voiceRecordBtn.addEventListener("touchstart", startRecording);
+voiceRecordBtn.addEventListener("mouseup", stopRecording);
+voiceRecordBtn.addEventListener("mouseleave", stopRecording);
+voiceRecordBtn.addEventListener("touchend", stopRecording);
+
+async function startRecording(e) {
+  e.preventDefault();
+  console.log("Starting recording...");
+  
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    
+    mediaRecorder.ondataavailable = function(event) {
+      if (event.data.size > 0) audioChunks.push(event.data);
+    };
+    
+    mediaRecorder.onstop = async function() {
+      stream.getTracks().forEach(track => track.stop());
+      if (audioChunks.length === 0) return;
+      
+      const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+      
+      try {
+        sendButton.disabled = true;
+        messageInput.placeholder = "Uploading voice...";
+        
+        const storageRef = ref(storage, "audio/" + currentUser.uid + "/" + Date.now() + "_voice.webm");
+        const snapshot = await uploadBytes(storageRef, audioBlob);
+        const downloadURL = await getDownloadURL(snapshot.ref);
+        
+        await addDoc(collection(db, "messages"), {
+          type: "audio",
+          audioUrl: downloadURL,
+          senderId: currentUser.uid,
+          receiverId: contactId,
+          timestamp: serverTimestamp(),
+          read: false
+        });
+        
+        console.log("Voice sent!");
+      } catch (error) {
+        console.error("Error sending voice:", error);
+      } finally {
+        sendButton.disabled = false;
+        messageInput.placeholder = "Type your message...";
+        voiceRecordBtn.classList.remove("recording");
+      }
+    };
+    
+    mediaRecorder.start(100);
+    isRecording = true;
+    voiceRecordBtn.classList.add("recording");
+    messageInput.placeholder = "Recording... Release to send";
+    recordingTimeout = setTimeout(() => { if (isRecording) stopRecording(); }, 60000);
+    
+  } catch (error) {
+    console.error("Error accessing microphone:", error);
+    alert("Error accessing microphone: " + error.message);
+  }
+}
+
+function stopRecording(e) {
+  if (e) e.preventDefault();
+  if (mediaRecorder && isRecording) {
+    mediaRecorder.stop();
+    isRecording = false;
+    voiceRecordBtn.classList.remove("recording");
+    messageInput.placeholder = "Type your message...";
+    if (recordingTimeout) clearTimeout(recordingTimeout);
+  }
+}
+
+// =====================
+// ATTACHMENT MENU
+// =====================
+
+attachBtn.addEventListener("click", function(e) {
+  e.stopPropagation();
+  attachMenu.classList.toggle("show");
+});
+
+document.addEventListener("click", function() {
+  attachMenu.classList.remove("show");
+});
+
+photoOption.addEventListener("click", function(e) {
+  e.stopPropagation();
+  attachMenu.classList.remove("show");
+  imageInput.click();
+});
+
+imageInput.addEventListener("change", async function(e) {
+  const file = e.target.files[0];
+  if (!file || !currentUser) return;
+  
+  try {
+    sendButton.disabled = true;
+    messageInput.placeholder = "Uploading image...";
+    
+    const storageRef = ref(storage, "images/" + currentUser.uid + "/" + Date.now() + "_" + file.name);
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(snapshot.ref);
+    
+    await addDoc(collection(db, "messages"), {
+      type: "image",
+      imageUrl: downloadURL,
+      senderId: currentUser.uid,
+      receiverId: contactId,
+      timestamp: serverTimestamp(),
+      read: false
+    });
+    
+    console.log("Image sent");
+  } catch (error) {
+    console.error("Error uploading image:", error);
+    alert("Error uploading image: " + error.message);
+  } finally {
+    sendButton.disabled = false;
+    messageInput.placeholder = "Type your message...";
+    imageInput.value = "";
+  }
+});
+
+// =====================
+// NAVIGATION
+// =====================
+
+document.getElementById("contact-info-btn").addEventListener("click", function() {
+  window.location.href = "contact-info.html?contactId=" + contactId;
+});
+
+document.getElementById("call-btn").addEventListener("click", async function() {
+  if (!currentUser || !contactId) return;
+  const callChatId = currentUser.uid < contactId ? "chat_" + currentUser.uid + "_" + contactId : "chat_" + contactId + "_" + currentUser.uid;
+  try {
+    await updateDoc(doc(db, "users", contactId), {
+      incomingCall: { from: currentUser.uid, callerName: currentUser.firstName || "User", chatId: callChatId }
+    });
+    window.location.href = "calling.html?contactId=" + contactId + "&chatId=" + callChatId;
+  } catch (error) {
+    console.error("Call error:", error);
+  }
+});
+
+// =====================
+// INIT
+// =====================
+
+onAuthStateChanged(auth, async (user) => {
+  if (user) {
+    currentUser = user;
+    console.log("User:", user.uid);
+    
+    try {
+      const contactDoc = await getDoc(doc(db, "users", contactId));
+      if (contactDoc.exists()) {
+        const contactData = contactDoc.data();
+        document.getElementById("contact-name").textContent = contactData.firstName + " " + contactData.lastName;
+        document.getElementById("contact-image").src = contactData.profileImageUrl || "images/default-profile.png";
+      }
+      
+      await loadMessages();
+      setupRealtime();
+      
+    } catch (error) {
+      console.error("Init error:", error);
+    }
+  } else {
+    window.location.href = "auth.html";
+  }
+});
+</script>
+</body>
+</html>
