@@ -126,6 +126,7 @@
         // Clear incoming call notification
         await updateDoc(doc(db, "users", currentUser.uid), { incomingCall: null });
         
+        // Request microphone access
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         
         peerConnection = new RTCPeerConnection(iceServers);
@@ -140,6 +141,17 @@
               ["calleeCandidates." + currentUser.uid]: { type: "candidate", candidate: event.candidate.toJSON(), timestamp: Date.now() }
             });
           }
+        };
+
+        peerConnection.ontrack = function(event) {
+          console.log("Received remote track:", event.track);
+          const remoteAudio = document.createElement("audio");
+          remoteAudio.id = "remote-audio";
+          remoteAudio.autoplay = true;
+          remoteAudio.playsInline = true;
+          remoteAudio.srcObject = event.streams[0];
+          document.body.appendChild(remoteAudio);
+          remoteAudio.play().catch(e => console.error("Error playing remote audio:", e));
         };
 
         peerConnection.onconnectionstatechange = function() {
